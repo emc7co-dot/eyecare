@@ -23,6 +23,11 @@ jobs:
         with:
           channel: 'stable'
 
+      - name: Scaffold missing Android platform files
+        run: |
+          flutter create --platforms=android --org com.example --project-name eyecare /tmp/scaffold
+          rsync -a --ignore-existing /tmp/scaffold/android/ android/
+
       - name: Install dependencies
         run: flutter pub get
 
