@@ -57,6 +57,20 @@ class MainActivity : FlutterActivity() {
                             )
                         )
                     }
+                    "setMonitoringEnabled" -> {
+                        val enabled = call.argument<Boolean>("enabled") ?: true
+                        ScreenTimeService.setMonitoringEnabled(applicationContext, enabled)
+                        result.success(true)
+                    }
+                    "showBreakFinishedNotification" -> {
+                        ScreenTimeService.showStandaloneNotification(
+                            applicationContext,
+                            1004,
+                            "🔔 استراحت تمام شد",
+                            "می‌توانی به کار خودت ادامه بدهی."
+                        )
+                        result.success(true)
+                    }
                     else -> result.notImplemented()
                 }
             }
