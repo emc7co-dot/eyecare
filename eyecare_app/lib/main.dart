@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter_localizations/flutter_localizations.dart';
 import 'native_screen_time_service.dart';
 
 void main() {
@@ -59,6 +58,7 @@ class EyeCareSettings {
   int shortBreakIntervalMinutes;
   int longBreakIntervalMinutes;
   bool strictLockMode;
+  bool monitoringEnabled;
 
   EyeCareSettings({
     this.blinkReminderEnabled = true,
@@ -66,6 +66,7 @@ class EyeCareSettings {
     this.shortBreakIntervalMinutes = 20,
     this.longBreakIntervalMinutes = 120,
     this.strictLockMode = false,
+    this.monitoringEnabled = true,
   });
 
   factory EyeCareSettings.fromPrefs(SharedPreferences p) => EyeCareSettings(
@@ -74,6 +75,7 @@ class EyeCareSettings {
         shortBreakIntervalMinutes: p.getInt('shortBreakIntervalMinutes') ?? 20,
         longBreakIntervalMinutes: p.getInt('longBreakIntervalMinutes') ?? 120,
         strictLockMode: p.getBool('strictLockMode') ?? false,
+        monitoringEnabled: p.getBool('monitoringEnabled') ?? true,
       );
 
   Future<void> saveToPrefs(SharedPreferences p) async {
@@ -82,6 +84,7 @@ class EyeCareSettings {
     await p.setInt('shortBreakIntervalMinutes', shortBreakIntervalMinutes);
     await p.setInt('longBreakIntervalMinutes', longBreakIntervalMinutes);
     await p.setBool('strictLockMode', strictLockMode);
+    await p.setBool('monitoringEnabled', monitoringEnabled);
   }
 }
 
@@ -163,6 +166,7 @@ class _MainDashboardState extends State<MainDashboard>
   static const int _distanceCheckIntervalSeconds = 45 * 60;
 
   Timer? _pollTimer;
+  Timer? _uiTimer;
   Timer? _blinkTimer;
 
   bool _appInForeground = true;
@@ -204,13 +208,16 @@ class _MainDashboardState extends State<MainDashboard>
         longIntervalMinutes: _settings.longBreakIntervalMinutes,
       );
       await NativeScreenTimeService.setAppForeground(true);
+      await NativeScreenTimeService.setMonitoringEnabled(_settings.monitoringEnabled);
       await _syncThresholdsToNative();
     }
 
     if (!mounted) return;
     setState(() => _loaded = true);
-    _startTicking();
-    _restartBlinkTimer();
+    if (_settings.monitoringEnabled) {
+      _startTicking();
+      _restartBlinkTimer();
+    }
   }
 
   Future<void> _syncThresholdsToNative() async {
@@ -223,9 +230,20 @@ class _MainDashboardState extends State<MainDashboard>
 
   void _startTicking() {
     _pollTimer?.cancel();
+    _uiTimer?.cancel();
     final interval =
         _nativeAvailable ? const Duration(seconds: 5) : const Duration(seconds: 1);
     _pollTimer = Timer.periodic(interval, (_) => _tick());
+
+    // در حالت بومی، بین دو poll (هر ۵ ثانیه)، این تایمر جداگانه هر ۱ ثانیه
+    // فقط عدد نمایشی روی صفحه را +۱ می‌کند تا ثانیه‌شمار نرم دیده شود؛
+    // مقدار واقعی هر ۵ ثانیه توسط _tick() با داده‌ی بومی تصحیح می‌شود.
+    if (_nativeAvailable) {
+      _uiTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (_dialogOpen || !_appInForeground || !mounted) return;
+        setState(() => _stats.screenTimeSeconds++);
+      });
+    }
   }
 
   Future<void> _tick() async {
@@ -273,7 +291,7 @@ class _MainDashboardState extends State<MainDashboard>
 
   void _restartBlinkTimer() {
     _blinkTimer?.cancel();
-    if (!_settings.blinkReminderEnabled) return;
+    if (!_settings.blinkReminderEnabled || !_settings.monitoringEnabled) return;
     _blinkTimer = Timer.periodic(
       Duration(minutes: _settings.blinkIntervalMinutes),
       (_) {
@@ -282,6 +300,22 @@ class _MainDashboardState extends State<MainDashboard>
         }
       },
     );
+  }
+
+  /// روشن/خاموش‌کردن کل مانیتورینگ (دکمه‌ی اصلی در تنظیمات).
+  /// وقتی خاموش می‌شود: تایمرهای فلاتر متوقف می‌شوند و به سرویس بومی هم
+  /// گفته می‌شود دیگر نوتیفیکیشن استراحت نفرستد. وقتی روشن می‌شود: از
+  /// همین لحظه دوباره شروع به شمارش/یادآوری می‌کند.
+  Future<void> _toggleMonitoring(bool enabled) async {
+    await NativeScreenTimeService.setMonitoringEnabled(enabled);
+    if (enabled) {
+      _startTicking();
+      _restartBlinkTimer();
+    } else {
+      _pollTimer?.cancel();
+      _uiTimer?.cancel();
+      _blinkTimer?.cancel();
+    }
   }
 
   Future<void> _persistStats() async {
@@ -307,12 +341,38 @@ class _MainDashboardState extends State<MainDashboard>
 
   Future<void> _handleReturnToForeground() async {
     await NativeScreenTimeService.setAppForeground(true);
+
+    final previousShortAt = _nextShortBreakAt;
+    final previousLongAt = _nextLongBreakAt;
+
     final nativeThresholds = await NativeScreenTimeService.getNextBreakThresholds();
+    bool shortBreakFiredInBackground = false;
+    bool longBreakFiredInBackground = false;
+
     if (nativeThresholds != null) {
-      _nextShortBreakAt = nativeThresholds['nextShortAtSeconds']!;
-      _nextLongBreakAt = nativeThresholds['nextLongAtSeconds']!;
+      final newShortAt = nativeThresholds['nextShortAtSeconds']!;
+      final newLongAt = nativeThresholds['nextLongAtSeconds']!;
+      // اگر آستانه‌ی جدید از قبلی بزرگ‌تر شده، یعنی سرویس بومی در نبود ما
+      // یک نوتیفیکیشن فرستاده و استراحت را رد کرده — پس باید همان دیالوگ
+      // را الان اینجا هم نشان بدهیم تا کاربر بتواند «الان / بعداً / لغو»
+      // را انتخاب کند، نه اینکه بی‌صدا از کنارش رد شویم.
+      if (newShortAt > previousShortAt) shortBreakFiredInBackground = true;
+      if (newLongAt > previousLongAt) longBreakFiredInBackground = true;
+      _nextShortBreakAt = newShortAt;
+      _nextLongBreakAt = newLongAt;
     }
-    if (mounted) _tick();
+
+    if (!mounted) return;
+
+    if (longBreakFiredInBackground) {
+      _stats.longBreaksTotal++;
+      _triggerLongBreakDialog();
+    } else if (shortBreakFiredInBackground) {
+      _stats.shortBreaksTotal++;
+      _triggerShortBreakDialog();
+    } else {
+      _tick();
+    }
   }
 
   void _triggerBlinkAnimation() {
@@ -406,6 +466,11 @@ class _MainDashboardState extends State<MainDashboard>
         onFinished: () {
           _stats.shortBreaksCompleted++;
           _persistStats();
+          // نوتیفیکیشن واقعی سیستم؛ حتی اگر کاربر همون لحظه از اپ خارج
+          // شده باشد یا صفحه قفل شده باشد هم دیده می‌شود، برخلاف SnackBar.
+          if (_nativeAvailable) {
+            NativeScreenTimeService.showBreakFinishedNotification();
+          }
         },
       ),
     ).then((_) {
@@ -617,6 +682,23 @@ class _MainDashboardState extends State<MainDashboard>
               ),
               const SizedBox(height: 12),
               SwitchListTile(
+                title: const Text('فعال بودن برنامه',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+                subtitle: Text(
+                  _settings.monitoringEnabled
+                      ? 'همه‌ی یادآوری‌ها فعال است'
+                      : 'برنامه غیرفعال است؛ هیچ یادآوری‌ای ارسال نمی‌شود',
+                ),
+                value: _settings.monitoringEnabled,
+                onChanged: (v) {
+                  setSheetState(() => _settings.monitoringEnabled = v);
+                  setState(() {});
+                  _persistSettings();
+                  _toggleMonitoring(v);
+                },
+              ),
+              const Divider(height: 24),
+              SwitchListTile(
                 title: const Text('یادآوری دیداری پلک زدن'),
                 subtitle: const Text('انیمیشن بسیار کوتاه، بدون صدا و ویبره'),
                 value: _settings.blinkReminderEnabled,
@@ -695,7 +777,8 @@ class _MainDashboardState extends State<MainDashboard>
         ],
       ),
     );
-  }  
+  }
+
   @override
   Widget build(BuildContext context) {
     if (!_loaded) {
@@ -785,6 +868,7 @@ class _MainDashboardState extends State<MainDashboard>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _pollTimer?.cancel();
+    _uiTimer?.cancel();
     _blinkTimer?.cancel();
     _blinkAnimController.dispose();
     _persistStats();
