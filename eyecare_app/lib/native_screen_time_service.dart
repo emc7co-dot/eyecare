@@ -102,4 +102,27 @@ class NativeScreenTimeService {
       return null;
     }
   }
+
+  /// روشن/خاموش‌کردن کامل مانیتورینگ در سمت سرویس بومی؛ وقتی خاموش است،
+  /// سرویس هیچ نوتیفیکیشن استراحتی در پس‌زمینه نمی‌فرستد.
+  static Future<void> setMonitoringEnabled(bool enabled) async {
+    try {
+      await _channel.invokeMethod('setMonitoringEnabled', {'enabled': enabled});
+    } on PlatformException {
+    } on MissingPluginException {
+      // بی‌اثر
+    }
+  }
+
+  /// یک نوتیفیکیشن واقعی سیستم برای اعلام پایان شمارش معکوس ۲۰ ثانیه‌ای؛
+  /// برخلاف SnackBar داخل‌اپ، حتی اگر صفحه قفل شود یا کاربر لحظه‌ای از
+  /// اپ خارج شود هم دیده می‌شود.
+  static Future<void> showBreakFinishedNotification() async {
+    try {
+      await _channel.invokeMethod('showBreakFinishedNotification');
+    } on PlatformException {
+    } on MissingPluginException {
+      // بی‌اثر
+    }
+  }
 }
