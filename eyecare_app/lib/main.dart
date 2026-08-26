@@ -661,6 +661,41 @@ class _MainDashboardState extends State<MainDashboard>
     );
   }
 
+  void _showAboutDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('درباره برنامه'),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('همراه سلامت چشم',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            SizedBox(height: 12),
+            Text('سازنده: احسان ایزدی'),
+            SizedBox(height: 4),
+            Text('وب‌سایت: Wining.ir'),
+            SizedBox(height: 4),
+            Text('ایمیل: ehsanizadiasl@gmail.com'),
+            SizedBox(height: 4),
+            Text('اینستاگرام: @Makarechian_7'),
+            SizedBox(height: 16),
+            Text(
+              'این اپ یک ابزار یادآوری رفتاری است و هیچ‌گونه ادعای درمان یا پیشگیری قطعی از نزدیک‌بینی ندارد.',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('بستن'),
+          ),
+        ],
+      ),
+    );
+  }  
   @override
   Widget build(BuildContext context) {
     if (!_loaded) {
@@ -671,6 +706,7 @@ class _MainDashboardState extends State<MainDashboard>
         title: const Text('همراه سلامت چشم'),
         actions: [
           IconButton(icon: const Icon(Icons.bar_chart), onPressed: _showDailyReport),
+          IconButton(icon: const Icon(Icons.info_outline), onPressed: _showAboutDialog),
           IconButton(icon: const Icon(Icons.settings), onPressed: _openSettingsSheet),
         ],
       ),
