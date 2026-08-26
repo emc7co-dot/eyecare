@@ -129,6 +129,54 @@ class ScreenTimeService : Service() {
             val longAt = prefs.getLong("nextLongAtSeconds", (DEFAULT_LONG_MINUTES * 60).toLong())
             return Pair(shortAt, longAt)
         }
+
+        /** کلید روشن/خاموش کامل مانیتورینگ؛ اگر خاموش باشد، سرویس هیچ
+         *  نوتیفیکیشن استراحتی نمی‌فرستد (حتی اگر آستانه رد شده باشد). */
+        fun setMonitoringEnabled(context: Context, enabled: Boolean) {
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            prefs.edit().putBoolean("monitoringEnabled", enabled).apply()
+        }
+
+        fun isMonitoringEnabled(context: Context): Boolean {
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            return prefs.getBoolean("monitoringEnabled", true)
+        }
+
+        /** یک نوتیفیکیشن ساده و مستقل (مثلاً پیام پایان شمارش معکوس ۲۰
+         *  ثانیه‌ای) بدون وابستگی به نمونه‌ی در حال اجرای سرویس. از همان
+         *  کانال CHANNEL_ID_BREAK استفاده می‌کند که در onCreate ساخته
+         *  می‌شود؛ اگر سرویس هنوز یک‌بار هم اجرا نشده باشد این کانال ممکن
+         *  است وجود نداشته باشد، برای همین اینجا هم دوباره (idempotent)
+         *  ساخته می‌شود. */
+        fun showStandaloneNotification(context: Context, id: Int, title: String, text: String) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val manager = context.getSystemService(NotificationManager::class.java)
+                val channel = NotificationChannel(
+                    CHANNEL_ID_BREAK,
+                    "یادآوری‌های استراحت چشم",
+                    NotificationManager.IMPORTANCE_HIGH
+                )
+                manager?.createNotificationChannel(channel)
+            }
+
+            val notification = NotificationCompat.Builder(context, CHANNEL_ID_BREAK)
+                .setContentTitle(title)
+                .setContentText(text)
+                .setSmallIcon(android.R.drawable.ic_menu_view)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setAutoCancel(true)
+                .build()
+
+            val hasPermission = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                ContextCompat.checkSelfPermission(
+                    context,
+                    android.Manifest.permission.POST_NOTIFICATIONS
+                ) == PackageManager.PERMISSION_GRANTED
+
+            if (hasPermission) {
+                NotificationManagerCompat.from(context).notify(id, notification)
+            }
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -210,6 +258,8 @@ class ScreenTimeService : Service() {
      */
     private fun checkBreakThresholds() {
         ensureFreshDay(prefs)
+        val monitoringEnabled = prefs.getBoolean("monitoringEnabled", true)
+        if (!monitoringEnabled) return
         val appInForeground = prefs.getBoolean("appInForeground", true)
         if (appInForeground) return
 
