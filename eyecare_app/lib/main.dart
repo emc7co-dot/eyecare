@@ -160,6 +160,7 @@ class _MainDashboardState extends State<MainDashboard>
   bool _loaded = false;
 
   bool _nativeAvailable = false;
+  bool _hasOverlayPermission = false;
   int _lastKnownTotalSeconds = 0;
   int _nextShortBreakAt = 0;
   int _nextLongBreakAt = 0;
@@ -208,9 +209,14 @@ class _MainDashboardState extends State<MainDashboard>
         shortIntervalMinutes: _settings.shortBreakIntervalMinutes,
         longIntervalMinutes: _settings.longBreakIntervalMinutes,
       );
+      await NativeScreenTimeService.setBlinkSettings(
+        intervalMinutes: _settings.blinkIntervalMinutes,
+        enabled: _settings.blinkReminderEnabled,
+      );
       await NativeScreenTimeService.setAppForeground(true);
       await NativeScreenTimeService.setMonitoringEnabled(_settings.monitoringEnabled);
       await _syncThresholdsToNative();
+      _hasOverlayPermission = await NativeScreenTimeService.checkOverlayPermission();
     }
 
     if (!mounted) return;
@@ -219,6 +225,37 @@ class _MainDashboardState extends State<MainDashboard>
       _startTicking();
       _restartBlinkTimer();
     }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _showMedicalDisclaimer();
+    });
+  }
+
+  void _showMedicalDisclaimer() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('پیش از استفاده بخوانید'),
+        content: const SingleChildScrollView(
+          child: Text(
+            'این برنامه یک ابزار یادآوری رفتاری برای کاهش فشار چشمی ناشی از '
+            'استفاده‌ی طولانی از صفحه‌نمایش است؛ با یادآوری پلک‌زدن، استراحت‌های '
+            'کوتاه و بلند و بررسی فاصله، به ایجاد عادت‌های سالم‌تر کمک می‌کند.\n\n'
+            'این برنامه هیچ ادعای تشخیص، درمان یا پیشگیری قطعی از نزدیک‌بینی یا '
+            'هر بیماری چشمی دیگر ندارد و جایگزین معاینه و توصیه‌ی پزشک متخصص '
+            'چشم نیست. در صورت وجود هرگونه ناراحتی یا علائم چشمی، حتماً به '
+            'چشم‌پزشک مراجعه کنید.',
+            style: TextStyle(fontSize: 14, height: 1.6),
+          ),
+        ),
+        actions: [
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('متوجه شدم'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _syncThresholdsToNative() async {
@@ -304,18 +341,33 @@ class _MainDashboardState extends State<MainDashboard>
   }
 
   /// روشن/خاموش‌کردن کل مانیتورینگ (دکمه‌ی اصلی در تنظیمات).
-  /// وقتی خاموش می‌شود: تایمرهای فلاتر متوقف می‌شوند و به سرویس بومی هم
-  /// گفته می‌شود دیگر نوتیفیکیشن استراحت نفرستد. وقتی روشن می‌شود: از
-  /// همین لحظه دوباره شروع به شمارش/یادآوری می‌کند.
+  /// خاموش‌کردن، خودِ سرویس پس‌زمینه‌ی اندروید را کامل می‌بندد — یعنی
+  /// نوتیفیکیشن پایدار هم حذف می‌شود و اپ واقعاً دیگر در پس‌زمینه اجرا
+  /// نمی‌ماند (نه فقط ساکت‌کردن یادآوری‌ها). روشن‌کردن دوباره سرویس را
+  /// راه‌اندازی می‌کند.
   Future<void> _toggleMonitoring(bool enabled) async {
-    await NativeScreenTimeService.setMonitoringEnabled(enabled);
+    _pollTimer?.cancel();
+    _uiTimer?.cancel();
+    _blinkTimer?.cancel();
+
     if (enabled) {
+      if (_nativeAvailable) {
+        await NativeScreenTimeService.startMonitoringService();
+        await NativeScreenTimeService.setBreakSettings(
+          shortIntervalMinutes: _settings.shortBreakIntervalMinutes,
+          longIntervalMinutes: _settings.longBreakIntervalMinutes,
+        );
+        await NativeScreenTimeService.setAppForeground(true);
+        await NativeScreenTimeService.setMonitoringEnabled(true);
+        await _syncThresholdsToNative();
+      }
       _startTicking();
       _restartBlinkTimer();
     } else {
-      _pollTimer?.cancel();
-      _uiTimer?.cancel();
-      _blinkTimer?.cancel();
+      await NativeScreenTimeService.setMonitoringEnabled(false);
+      if (_nativeAvailable) {
+        await NativeScreenTimeService.stopMonitoringService();
+      }
     }
   }
 
@@ -699,6 +751,32 @@ class _MainDashboardState extends State<MainDashboard>
                 },
               ),
               const Divider(height: 24),
+              ListTile(
+                leading: Icon(
+                  _hasOverlayPermission ? Icons.check_circle : Icons.warning_amber,
+                  color: _hasOverlayPermission ? Colors.green : Colors.orange,
+                ),
+                title: const Text('نمایش یادآوری روی اپ‌های دیگر'),
+                subtitle: Text(
+                  _hasOverlayPermission
+                      ? 'فعال — یادآوری‌ها حتی وقتی در اپ دیگری هستی روی صفحه نشان داده می‌شوند'
+                      : 'غیرفعال — بدون این مجوز، یادآوری‌های پس‌زمینه فقط به‌صورت نوتیفیکیشن می‌آیند',
+                ),
+                trailing: _hasOverlayPermission
+                    ? null
+                    : TextButton(
+                        onPressed: () async {
+                          await NativeScreenTimeService.requestOverlayPermission();
+                          await Future.delayed(const Duration(seconds: 1));
+                          final granted =
+                              await NativeScreenTimeService.checkOverlayPermission();
+                          setSheetState(() => _hasOverlayPermission = granted);
+                          setState(() {});
+                        },
+                        child: const Text('فعال‌سازی'),
+                      ),
+              ),
+              const Divider(height: 24),
               SwitchListTile(
                 title: const Text('یادآوری دیداری پلک زدن'),
                 subtitle: const Text('انیمیشن بسیار کوتاه، بدون صدا و ویبره'),
@@ -708,6 +786,12 @@ class _MainDashboardState extends State<MainDashboard>
                   setState(() {});
                   _persistSettings();
                   _restartBlinkTimer();
+                  if (_nativeAvailable) {
+                    NativeScreenTimeService.setBlinkSettings(
+                      intervalMinutes: _settings.blinkIntervalMinutes,
+                      enabled: _settings.blinkReminderEnabled,
+                    );
+                  }
                 },
               ),
               ListTile(
@@ -723,6 +807,12 @@ class _MainDashboardState extends State<MainDashboard>
                     setState(() {});
                     _persistSettings();
                     _restartBlinkTimer();
+                    if (_nativeAvailable) {
+                      NativeScreenTimeService.setBlinkSettings(
+                        intervalMinutes: _settings.blinkIntervalMinutes,
+                        enabled: _settings.blinkReminderEnabled,
+                      );
+                    }
                   },
                 ),
               ),
@@ -763,6 +853,11 @@ class _MainDashboardState extends State<MainDashboard>
             Text('ایمیل: ehsanizadiasl@gmail.com'),
             SizedBox(height: 4),
             Text('اینستاگرام: @Makarechian_7'),
+            SizedBox(height: 12),
+            Text(
+              'برای پیشنهاد، گزارش مشکل یا همکاری، از راه‌های بالا با سازنده در تماس باشید.',
+              style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic),
+            ),
             SizedBox(height: 16),
             Text(
               'این اپ یک ابزار یادآوری رفتاری است و هیچ‌گونه ادعای درمان یا پیشگیری قطعی از نزدیک‌بینی ندارد.',
@@ -799,42 +894,85 @@ class _MainDashboardState extends State<MainDashboard>
           ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              Card(
-                elevation: 0,
-                color: Theme.of(context).colorScheme.primaryContainer,
-                child: Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    children: [
-                      const Text('زمان فعال صفحه امروز'),
-                      const SizedBox(height: 8),
-                      Text(
-                        '${_stats.screenTimeSeconds ~/ 3600}:'
-                        '${((_stats.screenTimeSeconds % 3600) ~/ 60).toString().padLeft(2, '0')}:'
-                        '${(_stats.screenTimeSeconds % 60).toString().padLeft(2, '0')}',
-                        style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        _nativeAvailable
-                            ? 'منبع: زمان واقعی صفحه (بومی، شامل سایر اپ‌ها)'
-                            : 'منبع: تخمین محلی (فقط زمان همین اپ)',
-                        style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
-                      ),
+              Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(24),
+                  gradient: LinearGradient(
+                    begin: Alignment.topRight,
+                    end: Alignment.bottomLeft,
+                    colors: [
+                      const Color(0xFF2B6CB0),
+                      const Color(0xFF63B3ED),
                     ],
                   ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF2B6CB0).withOpacity(0.28),
+                      blurRadius: 20,
+                      offset: const Offset(0, 10),
+                    ),
+                  ],
+                ),
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  children: [
+                    const Icon(Icons.remove_red_eye_outlined,
+                        color: Colors.white, size: 32),
+                    const SizedBox(height: 8),
+                    const Text('زمان فعال صفحه امروز',
+                        style: TextStyle(color: Colors.white, fontSize: 13)),
+                    const SizedBox(height: 8),
+                    Text(
+                      '${_stats.screenTimeSeconds ~/ 3600}:'
+                      '${((_stats.screenTimeSeconds % 3600) ~/ 60).toString().padLeft(2, '0')}:'
+                      '${(_stats.screenTimeSeconds % 60).toString().padLeft(2, '0')}',
+                      style: const TextStyle(
+                        fontSize: 40,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                        letterSpacing: 1,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      _nativeAvailable
+                          ? 'منبع: زمان واقعی صفحه (بومی، شامل سایر اپ‌ها)'
+                          : 'منبع: تخمین محلی (فقط زمان همین اپ)',
+                      style: TextStyle(fontSize: 11, color: Colors.white.withOpacity(0.85)),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(height: 16),
-              ListTile(
-                leading: const Icon(Icons.remove_red_eye),
-                title: const Text('تست انیمیشن پلک زدن'),
-                onTap: _triggerBlinkAnimation,
-              ),
-              ListTile(
-                leading: const Icon(Icons.timer),
-                title: const Text('تست یادآوری استراحت کوتاه (۲۰-۲۰-۲۰)'),
-                onTap: _triggerShortBreakDialog,
+              const SizedBox(height: 20),
+              Card(
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  side: BorderSide(color: Colors.grey.shade200),
+                ),
+                child: Column(
+                  children: [
+                    ListTile(
+                      leading: CircleAvatar(
+                        backgroundColor: const Color(0xFF2B6CB0).withOpacity(0.1),
+                        child: const Icon(Icons.remove_red_eye, color: Color(0xFF2B6CB0)),
+                      ),
+                      title: const Text('تست انیمیشن پلک زدن'),
+                      trailing: const Icon(Icons.chevron_left, size: 20),
+                      onTap: _triggerBlinkAnimation,
+                    ),
+                    const Divider(height: 1, indent: 16, endIndent: 16),
+                    ListTile(
+                      leading: CircleAvatar(
+                        backgroundColor: const Color(0xFF2B6CB0).withOpacity(0.1),
+                        child: const Icon(Icons.timer, color: Color(0xFF2B6CB0)),
+                      ),
+                      title: const Text('تست یادآوری استراحت کوتاه (۲۰-۲۰-۲۰)'),
+                      trailing: const Icon(Icons.chevron_left, size: 20),
+                      onTap: _triggerShortBreakDialog,
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -842,22 +980,37 @@ class _MainDashboardState extends State<MainDashboard>
             Positioned(
               top: 40,
               right: 20,
-              child: AnimatedBuilder(
-                animation: _blinkAnimController,
-                builder: (context, child) {
-                  return Transform.scale(
-                    scaleY: 1.0 - (_blinkAnimController.value * 0.9),
-                    child: Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: Colors.black87,
-                        borderRadius: BorderRadius.circular(30),
-                      ),
-                      child:
-                          const Icon(Icons.remove_red_eye, color: Colors.white, size: 28),
-                    ),
-                  );
+              child: GestureDetector(
+                onTap: () {
+                  // «فهمیدم و انجام دادم» — با لمس، بلافاصله بسته می‌شود
+                  _blinkAnimController.stop();
+                  setState(() => _showBlinkOverlay = false);
                 },
+                child: AnimatedBuilder(
+                  animation: _blinkAnimController,
+                  builder: (context, child) {
+                    return Transform.scale(
+                      scaleY: 1.0 - (_blinkAnimController.value * 0.9),
+                      child: Container(
+                        width: 56,
+                        height: 56,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF2B6CB0),
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFF2B6CB0).withOpacity(0.4),
+                              blurRadius: 12,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                        child: const Icon(Icons.remove_red_eye,
+                            color: Colors.white, size: 28),
+                      ),
+                    );
+                  },
+                ),
               ),
             ),
         ],
