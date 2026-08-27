@@ -114,12 +114,74 @@ class NativeScreenTimeService {
     }
   }
 
+  /// توقف کامل سرویس پس‌زمینه (نه فقط خاموش‌کردن هشدارها) — نوتیفیکیشن
+  /// دائمی هم حذف می‌شود و واقعاً هیچ چیزی از این اپ در پس‌زمینه نمی‌ماند.
+  static Future<void> stopMonitoringService() async {
+    try {
+      await _channel.invokeMethod('stopMonitoringService');
+    } on PlatformException {
+    } on MissingPluginException {
+      // بی‌اثر
+    }
+  }
+
+  /// راه‌اندازی دوباره‌ی سرویس پس‌زمینه بعد از این‌که کاربر مانیتورینگ
+  /// را دوباره روشن کرد.
+  static Future<void> startMonitoringService() async {
+    try {
+      await _channel.invokeMethod('startMonitoringService');
+    } on PlatformException {
+    } on MissingPluginException {
+      // بی‌اثر
+    }
+  }
+
   /// یک نوتیفیکیشن واقعی سیستم برای اعلام پایان شمارش معکوس ۲۰ ثانیه‌ای؛
   /// برخلاف SnackBar داخل‌اپ، حتی اگر صفحه قفل شود یا کاربر لحظه‌ای از
   /// اپ خارج شود هم دیده می‌شود.
   static Future<void> showBreakFinishedNotification() async {
     try {
       await _channel.invokeMethod('showBreakFinishedNotification');
+    } on PlatformException {
+    } on MissingPluginException {
+      // بی‌اثر
+    }
+  }
+
+  /// فاصله‌ی یادآوری پلک (دقیقه) و فعال/غیرفعال بودنش را به سرویس بومی
+  /// می‌فرستد تا خودش هم بتواند در پس‌زمینه (روی سایر اپ‌ها) یادآوری کند.
+  static Future<void> setBlinkSettings({
+    required int intervalMinutes,
+    required bool enabled,
+  }) async {
+    try {
+      await _channel.invokeMethod('setBlinkSettings', {
+        'intervalMinutes': intervalMinutes,
+        'enabled': enabled,
+      });
+    } on PlatformException {
+    } on MissingPluginException {
+      // بی‌اثر
+    }
+  }
+
+  /// آیا مجوز «نمایش روی اپ‌های دیگر» داده شده؟ بدون این مجوز، یادآوری‌های
+  /// پس‌زمینه فقط با نوتیفیکیشن معمولی fallback می‌کنند (نه overlay واقعی).
+  static Future<bool> checkOverlayPermission() async {
+    try {
+      final bool granted = await _channel.invokeMethod('checkOverlayPermission');
+      return granted;
+    } on PlatformException {
+      return false;
+    } on MissingPluginException {
+      return false;
+    }
+  }
+
+  /// کاربر را به صفحه‌ی تنظیمات اندروید برای دادن مجوز overlay می‌برد.
+  static Future<void> requestOverlayPermission() async {
+    try {
+      await _channel.invokeMethod('requestOverlayPermission');
     } on PlatformException {
     } on MissingPluginException {
       // بی‌اثر
