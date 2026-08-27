@@ -17,7 +17,11 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        startScreenTimeServiceIfNeeded()
+        // فقط اگر کاربر قبلاً خودش مانیتورینگ را خاموش نکرده باشد، موقع
+        // باز شدن اپ سرویس پس‌زمینه را خودکار راه‌اندازی کن.
+        if (ScreenTimeService.isMonitoringEnabled(applicationContext)) {
+            startScreenTimeServiceIfNeeded()
+        }
         requestNotificationPermissionIfNeeded()
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channel)
@@ -62,6 +66,17 @@ class MainActivity : FlutterActivity() {
                         ScreenTimeService.setMonitoringEnabled(applicationContext, enabled)
                         result.success(true)
                     }
+                    "stopMonitoringService" -> {
+                        // توقف کامل سرویس پس‌زمینه؛ نوتیفیکیشن دائمی هم حذف می‌شود
+                        // و دیگر واقعاً هیچ چیزی از این اپ در پس‌زمینه نمی‌ماند.
+                        val stopIntent = Intent(this, ScreenTimeService::class.java)
+                        stopService(stopIntent)
+                        result.success(true)
+                    }
+                    "startMonitoringService" -> {
+                        startScreenTimeServiceIfNeeded()
+                        result.success(true)
+                    }
                     "showBreakFinishedNotification" -> {
                         ScreenTimeService.showStandaloneNotification(
                             applicationContext,
@@ -69,6 +84,37 @@ class MainActivity : FlutterActivity() {
                             "🔔 استراحت تمام شد",
                             "می‌توانی به کار خودت ادامه بدهی."
                         )
+                        result.success(true)
+                    }
+                    "setBlinkSettings" -> {
+                        val intervalMin = call.argument<Int>("intervalMinutes") ?: 5
+                        val enabled = call.argument<Boolean>("enabled") ?: true
+                        ScreenTimeService.setBlinkSettings(applicationContext, intervalMin, enabled)
+                        result.success(true)
+                    }
+                    "checkOverlayPermission" -> {
+                        result.success(ScreenTimeService.canDrawOverlay(applicationContext))
+                    }
+                    "requestOverlayPermission" -> {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                            val intent = Intent(
+                                android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                android.net.Uri.parse("package:$packageName")
+                            )
+                            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            startActivity(intent)
+                        }
+                        result.success(true)
+                    }
+                    "stopScreenTimeService" -> {
+                        // این فقط نوتیفیکیشن‌ها را متوقف نمی‌کند، خودِ سرویس
+                        // پس‌زمینه را کامل می‌بندد (نوتیفیکیشن پایدار هم حذف می‌شود).
+                        val serviceIntent = Intent(this, ScreenTimeService::class.java)
+                        stopService(serviceIntent)
+                        result.success(true)
+                    }
+                    "startScreenTimeService" -> {
+                        startScreenTimeServiceIfNeeded()
                         result.success(true)
                     }
                     else -> result.notImplemented()
