@@ -11,6 +11,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
@@ -21,6 +22,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
+import android.speech.tts.TextToSpeech
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
@@ -31,6 +33,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -53,6 +56,21 @@ class ScreenTimeService : Service() {
     private var screenReceiver: BroadcastReceiver? = null
     private val handler = Handler(Looper.getMainLooper())
     private var checkRunnable: Runnable? = null
+    private var tts: TextToSpeech? = null
+    private var ttsReady = false
+
+    /** خواندن متن با صدا (فارسی)؛ اگر موتور TTS گوشی زبان فارسی را
+     *  پشتیبانی نکند یا آماده نباشد، بی‌خطر نادیده گرفته می‌شود — هیچ‌وقت
+     *  مانع نمایش خودِ نوتیفیکیشن نمی‌شود. */
+    private fun speak(text: String) {
+        try {
+            val voiceEnabled = prefs.getBoolean("voiceAlertsEnabled", true)
+            if (!voiceEnabled || !ttsReady || tts == null) return
+            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "eyecare_tts")
+        } catch (e: Exception) {
+            // بی‌خطر رد شو
+        }
+    }
 
     companion object {
         const val PREFS_NAME = "eyecare_native_screen_time"
@@ -168,6 +186,11 @@ class ScreenTimeService : Service() {
             prefs.edit().putBoolean("monitoringEnabled", enabled).apply()
         }
 
+        fun setVoiceAlertsEnabled(context: Context, enabled: Boolean) {
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            prefs.edit().putBoolean("voiceAlertsEnabled", enabled).apply()
+        }
+
         fun isMonitoringEnabled(context: Context): Boolean {
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             return prefs.getBoolean("monitoringEnabled", true)
@@ -196,6 +219,7 @@ class ScreenTimeService : Service() {
                 .setSmallIcon(android.R.drawable.ic_menu_view)
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setAutoCancel(true)
+                .setTimeoutAfter(20_000)
                 .build()
 
             val hasPermission = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
@@ -206,6 +230,36 @@ class ScreenTimeService : Service() {
 
             if (hasPermission) {
                 NotificationManagerCompat.from(context).notify(id, notification)
+            }
+        }
+
+        /** یک بار کوتاه صحبت می‌کند (برای نوتیفیکیشن‌های مستقل مثل پایان
+         *  استراحت که نمونه‌ی در حال اجرای سرویس را در اختیار ندارند)؛
+         *  یک موتور TTS موقت می‌سازد و بعد از چند ثانیه خودش را می‌بندد. */
+        fun speakOnce(context: Context, text: String) {
+            try {
+                val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                if (!prefs.getBoolean("voiceAlertsEnabled", true)) return
+                var engine: TextToSpeech? = null
+                engine = TextToSpeech(context) { status ->
+                    if (status == TextToSpeech.SUCCESS) {
+                        val result = engine?.setLanguage(Locale("fa", "IR"))
+                        if (result != TextToSpeech.LANG_MISSING_DATA &&
+                            result != TextToSpeech.LANG_NOT_SUPPORTED
+                        ) {
+                            engine?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "eyecare_tts_once")
+                        }
+                    }
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        try {
+                            engine?.stop()
+                            engine?.shutdown()
+                        } catch (e: Exception) {
+                        }
+                    }, 4000)
+                }
+            } catch (e: Exception) {
+                // بی‌خطر رد شو
             }
         }
     }
@@ -219,8 +273,24 @@ class ScreenTimeService : Service() {
         initializeScreenState()
         registerScreenReceiver()
         createNotificationChannels()
-        startForeground(NOTIFICATION_ID_PERSISTENT, buildPersistentNotification())
+        ServiceCompat.startForeground(
+            this,
+            NOTIFICATION_ID_PERSISTENT,
+            buildPersistentNotification(),
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            else
+                0
+        )
         startPeriodicBreakCheck()
+
+        tts = TextToSpeech(this) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                val result = tts?.setLanguage(Locale("fa", "IR"))
+                ttsReady = result != TextToSpeech.LANG_MISSING_DATA &&
+                    result != TextToSpeech.LANG_NOT_SUPPORTED
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -318,7 +388,12 @@ class ScreenTimeService : Service() {
             val blinkMin = prefs.getInt("blinkIntervalMinutes", DEFAULT_BLINK_MINUTES)
             val nextBlinkAt = prefs.getLong("nextBlinkAtSeconds", (blinkMin * 60).toLong())
             if (currentTotal >= nextBlinkAt) {
-                if (overlayAllowed) handler.post { showBlinkOverlay() }
+                if (overlayAllowed) {
+                    handler.post { showBlinkOverlay() }
+                } else {
+                    showBreakNotification(1005, "👁️ پلک بزن", "چند بار پلک بزن تا چشم‌هایت خشک نشود.")
+                }
+                speak("پلک بزن")
                 prefs.edit().putLong("nextBlinkAtSeconds", currentTotal + blinkMin * 60L).apply()
             }
         }
@@ -333,9 +408,10 @@ class ScreenTimeService : Service() {
                 showBreakNotification(
                     NOTIFICATION_ID_SHORT_BREAK,
                     "👁️ وقت مراقبت از چشم",
-                    "آیا حداقل ۶ متر به دور نگاه می‌کنی؟"
+                    "۲۰ ثانیه به فاصله‌ی حداقل ۶ متر نگاه کن."
                 )
             }
+            speak("بیست ثانیه به فاصله شش متر نگاه کن")
             prefs.edit().putLong("nextShortAtSeconds", currentTotal + shortMin * 60L).apply()
         }
 
@@ -349,9 +425,10 @@ class ScreenTimeService : Service() {
                 showBreakNotification(
                     NOTIFICATION_ID_LONG_BREAK,
                     "🛑 استراحت طولانی",
-                    "پیشنهاد می‌کنیم ۱۵ دقیقه از صفحه فاصله بگیری."
+                    "مدت زیادی از صفحه استفاده کردی؛ ۱۵ دقیقه مانیتور را رها کن، برای سلامت چشم‌های قشنگت 💙"
                 )
             }
+            speak("پانزده دقیقه مانیتور را رها کن، برای سلامت چشمای قشنگت")
             prefs.edit().putLong("nextLongAtSeconds", currentTotal + longMin * 60L).apply()
         }
     }
@@ -498,8 +575,30 @@ class ScreenTimeService : Service() {
             card.addView(btn, lp)
         }
 
-        addOverlayButton(if (isLong) "الان استراحت می‌کنم" else "الان انجام می‌دهم", true) {
-            // کاربر خودش استراحت را انجام می‌دهد؛ فقط کارت بسته می‌شود
+        if (isLong) {
+            addOverlayButton("الان استراحت می‌کنم", true) {
+                // کاربر خودش استراحت را انجام می‌دهد؛ فقط کارت بسته می‌شود
+            }
+        } else {
+            // برای استراحت کوتاه، «الان انجام می‌دهم» باید مثل حالت داخل‌اپ
+            // یک شمارش معکوس ۲۰ ثانیه‌ای واقعی نشان بدهد، نه فقط بسته شود.
+            val primaryBtn = Button(this)
+            primaryBtn.text = "الان انجام می‌دهم"
+            primaryBtn.isAllCaps = false
+            primaryBtn.textSize = 14f
+            primaryBtn.setTextColor(Color.WHITE)
+            val primaryBg = GradientDrawable()
+            primaryBg.setColor(Color.parseColor("#2B6CB0"))
+            primaryBg.cornerRadius = dp(12).toFloat()
+            primaryBtn.background = primaryBg
+            primaryBtn.setOnClickListener {
+                showCountdownOverlay()
+            }
+            val primaryLp = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(44)
+            )
+            primaryLp.topMargin = dp(8)
+            card.addView(primaryBtn, primaryLp)
         }
         addOverlayButton("۵ دقیقه بعد", false) { postponeSeconds(5) }
         addOverlayButton("۱۰ دقیقه بعد", false) { postponeSeconds(10) }
@@ -522,6 +621,88 @@ class ScreenTimeService : Service() {
         }
     }
 
+    /** شمارش معکوس ۲۰ ثانیه‌ای روی هر اپی که باز است (معادل overlay همان
+     *  دیالوگ داخل‌اپ)؛ در پایان هم نوتیفیکیشن و هم صدای «تمام شد» را
+     *  فعال می‌کند تا کاربر واقعاً متوجه پایان استراحت بشود. */
+    private fun showCountdownOverlay() {
+        removeOverlay()
+        val density = resources.displayMetrics.density
+        fun dp(v: Int) = (v * density).toInt()
+
+        val card = LinearLayout(this)
+        card.orientation = LinearLayout.VERTICAL
+        card.gravity = Gravity.CENTER
+        card.setPadding(dp(28), dp(28), dp(28), dp(28))
+        val cardBg = GradientDrawable()
+        cardBg.setColor(Color.WHITE)
+        cardBg.cornerRadius = dp(20).toFloat()
+        card.background = cardBg
+        card.elevation = dp(12).toFloat()
+
+        val titleView = TextView(this)
+        titleView.text = "نگاه به فاصله ۶ متری"
+        titleView.textSize = 15f
+        titleView.setTypeface(null, Typeface.BOLD)
+        titleView.gravity = Gravity.CENTER
+        titleView.setTextColor(Color.parseColor("#1A202C"))
+        card.addView(titleView)
+
+        val countView = TextView(this)
+        countView.textSize = 44f
+        countView.setTypeface(null, Typeface.BOLD)
+        countView.gravity = Gravity.CENTER
+        countView.setTextColor(Color.parseColor("#2B6CB0"))
+        countView.setPadding(0, dp(12), 0, dp(4))
+        card.addView(countView)
+
+        val subView = TextView(this)
+        subView.text = "ثانیه باقی‌مانده"
+        subView.textSize = 12f
+        subView.gravity = Gravity.CENTER
+        subView.setTextColor(Color.parseColor("#4A5568"))
+        card.addView(subView)
+
+        val params = WindowManager.LayoutParams(
+            dp(220),
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            overlayWindowType(),
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            PixelFormat.TRANSLUCENT
+        )
+        params.gravity = Gravity.CENTER
+
+        try {
+            windowManager.addView(card, params)
+            overlayView = card
+        } catch (e: Exception) {
+            return
+        }
+
+        var secondsLeft = 20
+        countView.text = secondsLeft.toString()
+        val tickRunnable = object : Runnable {
+            override fun run() {
+                secondsLeft--
+                if (secondsLeft <= 0) {
+                    if (overlayView == card) removeOverlay()
+                    showStandaloneNotification(
+                        this@ScreenTimeService,
+                        1004,
+                        "🔔 استراحت تمام شد",
+                        "می‌توانی به کار خودت ادامه بدهی."
+                    )
+                    speak("استراحت تمام شد، می‌تونی ادامه بدی")
+                    return
+                }
+                if (overlayView == card) {
+                    countView.text = secondsLeft.toString()
+                    handler.postDelayed(this, 1000)
+                }
+            }
+        }
+        handler.postDelayed(tickRunnable, 1000)
+    }
+
     private fun showBreakNotification(id: Int, title: String, text: String) {
         val launchIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -539,6 +720,7 @@ class ScreenTimeService : Service() {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
+            .setTimeoutAfter(5 * 60_000)
             .build()
 
         val hasPermission = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
@@ -599,6 +781,12 @@ class ScreenTimeService : Service() {
             } catch (e: IllegalArgumentException) {
                 // قبلاً unregister شده؛ مشکلی نیست
             }
+        }
+        try {
+            tts?.stop()
+            tts?.shutdown()
+        } catch (e: Exception) {
+            // بی‌خطر رد شو
         }
         super.onDestroy()
     }
