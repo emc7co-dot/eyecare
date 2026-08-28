@@ -105,6 +105,16 @@ class NativeScreenTimeService {
 
   /// روشن/خاموش‌کردن کامل مانیتورینگ در سمت سرویس بومی؛ وقتی خاموش است،
   /// سرویس هیچ نوتیفیکیشن استراحتی در پس‌زمینه نمی‌فرستد.
+  /// روشن/خاموش‌کردن خواندن هشدارها با صدا (Text-to-Speech) در سمت بومی.
+  static Future<void> setVoiceAlertsEnabled(bool enabled) async {
+    try {
+      await _channel.invokeMethod('setVoiceAlertsEnabled', {'enabled': enabled});
+    } on PlatformException {
+    } on MissingPluginException {
+      // بی‌اثر
+    }
+  }
+
   static Future<void> setMonitoringEnabled(bool enabled) async {
     try {
       await _channel.invokeMethod('setMonitoringEnabled', {'enabled': enabled});
