@@ -66,6 +66,11 @@ class MainActivity : FlutterActivity() {
                         ScreenTimeService.setMonitoringEnabled(applicationContext, enabled)
                         result.success(true)
                     }
+                    "setVoiceAlertsEnabled" -> {
+                        val enabled = call.argument<Boolean>("enabled") ?: true
+                        ScreenTimeService.setVoiceAlertsEnabled(applicationContext, enabled)
+                        result.success(true)
+                    }
                     "stopMonitoringService" -> {
                         // توقف کامل سرویس پس‌زمینه؛ نوتیفیکیشن دائمی هم حذف می‌شود
                         // و دیگر واقعاً هیچ چیزی از این اپ در پس‌زمینه نمی‌ماند.
@@ -84,6 +89,7 @@ class MainActivity : FlutterActivity() {
                             "🔔 استراحت تمام شد",
                             "می‌توانی به کار خودت ادامه بدهی."
                         )
+                        ScreenTimeService.speakOnce(applicationContext, "استراحت تمام شد، می‌تونی ادامه بدی")
                         result.success(true)
                     }
                     "setBlinkSettings" -> {
