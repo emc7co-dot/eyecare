@@ -575,30 +575,8 @@ class ScreenTimeService : Service() {
             card.addView(btn, lp)
         }
 
-        if (isLong) {
-            addOverlayButton("الان استراحت می‌کنم", true) {
-                // کاربر خودش استراحت را انجام می‌دهد؛ فقط کارت بسته می‌شود
-            }
-        } else {
-            // برای استراحت کوتاه، «الان انجام می‌دهم» باید مثل حالت داخل‌اپ
-            // یک شمارش معکوس ۲۰ ثانیه‌ای واقعی نشان بدهد، نه فقط بسته شود.
-            val primaryBtn = Button(this)
-            primaryBtn.text = "الان انجام می‌دهم"
-            primaryBtn.isAllCaps = false
-            primaryBtn.textSize = 14f
-            primaryBtn.setTextColor(Color.WHITE)
-            val primaryBg = GradientDrawable()
-            primaryBg.setColor(Color.parseColor("#2B6CB0"))
-            primaryBg.cornerRadius = dp(12).toFloat()
-            primaryBtn.background = primaryBg
-            primaryBtn.setOnClickListener {
-                showCountdownOverlay()
-            }
-            val primaryLp = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(44)
-            )
-            primaryLp.topMargin = dp(8)
-            card.addView(primaryBtn, primaryLp)
+        addOverlayButton(if (isLong) "الان استراحت می‌کنم" else "الان انجام می‌دهم", true) {
+            // کاربر خودش استراحت را انجام می‌دهد؛ فقط کارت بسته می‌شود
         }
         addOverlayButton("۵ دقیقه بعد", false) { postponeSeconds(5) }
         addOverlayButton("۱۰ دقیقه بعد", false) { postponeSeconds(10) }
@@ -619,88 +597,6 @@ class ScreenTimeService : Service() {
         } catch (e: Exception) {
             // اگر افزودن overlay شکست خورد، بی‌خطر رد شو (نوتیفیکیشن fallback از قبل نرفته چون این مسیر جدا از آن است)
         }
-    }
-
-    /** شمارش معکوس ۲۰ ثانیه‌ای روی هر اپی که باز است (معادل overlay همان
-     *  دیالوگ داخل‌اپ)؛ در پایان هم نوتیفیکیشن و هم صدای «تمام شد» را
-     *  فعال می‌کند تا کاربر واقعاً متوجه پایان استراحت بشود. */
-    private fun showCountdownOverlay() {
-        removeOverlay()
-        val density = resources.displayMetrics.density
-        fun dp(v: Int) = (v * density).toInt()
-
-        val card = LinearLayout(this)
-        card.orientation = LinearLayout.VERTICAL
-        card.gravity = Gravity.CENTER
-        card.setPadding(dp(28), dp(28), dp(28), dp(28))
-        val cardBg = GradientDrawable()
-        cardBg.setColor(Color.WHITE)
-        cardBg.cornerRadius = dp(20).toFloat()
-        card.background = cardBg
-        card.elevation = dp(12).toFloat()
-
-        val titleView = TextView(this)
-        titleView.text = "نگاه به فاصله ۶ متری"
-        titleView.textSize = 15f
-        titleView.setTypeface(null, Typeface.BOLD)
-        titleView.gravity = Gravity.CENTER
-        titleView.setTextColor(Color.parseColor("#1A202C"))
-        card.addView(titleView)
-
-        val countView = TextView(this)
-        countView.textSize = 44f
-        countView.setTypeface(null, Typeface.BOLD)
-        countView.gravity = Gravity.CENTER
-        countView.setTextColor(Color.parseColor("#2B6CB0"))
-        countView.setPadding(0, dp(12), 0, dp(4))
-        card.addView(countView)
-
-        val subView = TextView(this)
-        subView.text = "ثانیه باقی‌مانده"
-        subView.textSize = 12f
-        subView.gravity = Gravity.CENTER
-        subView.setTextColor(Color.parseColor("#4A5568"))
-        card.addView(subView)
-
-        val params = WindowManager.LayoutParams(
-            dp(220),
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            overlayWindowType(),
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-            PixelFormat.TRANSLUCENT
-        )
-        params.gravity = Gravity.CENTER
-
-        try {
-            windowManager.addView(card, params)
-            overlayView = card
-        } catch (e: Exception) {
-            return
-        }
-
-        var secondsLeft = 20
-        countView.text = secondsLeft.toString()
-        val tickRunnable = object : Runnable {
-            override fun run() {
-                secondsLeft--
-                if (secondsLeft <= 0) {
-                    if (overlayView == card) removeOverlay()
-                    showStandaloneNotification(
-                        this@ScreenTimeService,
-                        1004,
-                        "🔔 استراحت تمام شد",
-                        "می‌توانی به کار خودت ادامه بدهی."
-                    )
-                    speak("استراحت تمام شد، می‌تونی ادامه بدی")
-                    return
-                }
-                if (overlayView == card) {
-                    countView.text = secondsLeft.toString()
-                    handler.postDelayed(this, 1000)
-                }
-            }
-        }
-        handler.postDelayed(tickRunnable, 1000)
     }
 
     private fun showBreakNotification(id: Int, title: String, text: String) {
