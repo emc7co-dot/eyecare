@@ -60,6 +60,7 @@ class EyeCareSettings {
   int longBreakIntervalMinutes;
   bool strictLockMode;
   bool monitoringEnabled;
+  bool voiceAlertsEnabled;
 
   EyeCareSettings({
     this.blinkReminderEnabled = true,
@@ -68,6 +69,7 @@ class EyeCareSettings {
     this.longBreakIntervalMinutes = 120,
     this.strictLockMode = false,
     this.monitoringEnabled = true,
+    this.voiceAlertsEnabled = true,
   });
 
   factory EyeCareSettings.fromPrefs(SharedPreferences p) => EyeCareSettings(
@@ -77,6 +79,7 @@ class EyeCareSettings {
         longBreakIntervalMinutes: p.getInt('longBreakIntervalMinutes') ?? 120,
         strictLockMode: p.getBool('strictLockMode') ?? false,
         monitoringEnabled: p.getBool('monitoringEnabled') ?? true,
+        voiceAlertsEnabled: p.getBool('voiceAlertsEnabled') ?? true,
       );
 
   Future<void> saveToPrefs(SharedPreferences p) async {
@@ -86,6 +89,7 @@ class EyeCareSettings {
     await p.setInt('longBreakIntervalMinutes', longBreakIntervalMinutes);
     await p.setBool('strictLockMode', strictLockMode);
     await p.setBool('monitoringEnabled', monitoringEnabled);
+    await p.setBool('voiceAlertsEnabled', voiceAlertsEnabled);
   }
 }
 
@@ -215,6 +219,7 @@ class _MainDashboardState extends State<MainDashboard>
       );
       await NativeScreenTimeService.setAppForeground(true);
       await NativeScreenTimeService.setMonitoringEnabled(_settings.monitoringEnabled);
+      await NativeScreenTimeService.setVoiceAlertsEnabled(_settings.voiceAlertsEnabled);
       await _syncThresholdsToNative();
       _hasOverlayPermission = await NativeScreenTimeService.checkOverlayPermission();
     }
@@ -241,11 +246,19 @@ class _MainDashboardState extends State<MainDashboard>
             'این برنامه یک ابزار یادآوری رفتاری برای کاهش فشار چشمی ناشی از '
             'استفاده‌ی طولانی از صفحه‌نمایش است؛ با یادآوری پلک‌زدن، استراحت‌های '
             'کوتاه و بلند و بررسی فاصله، به ایجاد عادت‌های سالم‌تر کمک می‌کند.\n\n'
+            'چرا این موضوع مهم است؟\n'
+            '• کار طولانی با صفحه معمولاً پلک‌زدن را کم می‌کند و می‌تواند باعث '
+            'خشکی، خستگی و تاری موقت چشم شود.\n'
+            '• قاعده‌ی رایج «۲۰-۲۰-۲۰» (هر ۲۰ دقیقه، ۲۰ ثانیه به فاصله‌ی حداقل ۶ '
+            'متر نگاه کردن) یک توصیه‌ی شناخته‌شده برای کاهش این فشار است.\n'
+            '• پژوهش‌های اخیر بین افزایش زمان استفاده از صفحه و افزایش نزدیک‌بینی '
+            'ارتباط آماری نشان داده‌اند، هرچند کیفیت این شواهد هنوز محدود است و '
+            'این ارتباط رابطه‌ی علّی قطعی نیست.\n\n'
             'این برنامه هیچ ادعای تشخیص، درمان یا پیشگیری قطعی از نزدیک‌بینی یا '
             'هر بیماری چشمی دیگر ندارد و جایگزین معاینه و توصیه‌ی پزشک متخصص '
             'چشم نیست. در صورت وجود هرگونه ناراحتی یا علائم چشمی، حتماً به '
             'چشم‌پزشک مراجعه کنید.',
-            style: TextStyle(fontSize: 14, height: 1.6),
+            style: TextStyle(fontSize: 13.5, height: 1.7),
           ),
         ),
         actions: [
@@ -775,6 +788,19 @@ class _MainDashboardState extends State<MainDashboard>
                         },
                         child: const Text('فعال‌سازی'),
                       ),
+              ),
+              SwitchListTile(
+                title: const Text('خواندن هشدارها با صدا'),
+                subtitle: const Text('وقتی اپ در پس‌زمینه است، یادآوری‌ها با صدای گوشی خوانده می‌شوند'),
+                value: _settings.voiceAlertsEnabled,
+                onChanged: (v) {
+                  setSheetState(() => _settings.voiceAlertsEnabled = v);
+                  setState(() {});
+                  _persistSettings();
+                  if (_nativeAvailable) {
+                    NativeScreenTimeService.setVoiceAlertsEnabled(v);
+                  }
+                },
               ),
               const Divider(height: 24),
               SwitchListTile(
