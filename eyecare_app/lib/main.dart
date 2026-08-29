@@ -1,10 +1,14 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'native_screen_time_service.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  MobileAds.instance.initialize();
   runApp(const EyeCareApp());
 }
 
@@ -14,7 +18,7 @@ class EyeCareApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'همراه سلامت چشم',
+      title: 'محافظ چشم',
       debugShowCheckedModeBanner: false,
       locale: const Locale('fa'),
       supportedLocales: const [Locale('fa'), Locale('en')],
@@ -61,6 +65,7 @@ class EyeCareSettings {
   bool strictLockMode;
   bool monitoringEnabled;
   bool voiceAlertsEnabled;
+  bool isPaidVersion;
 
   EyeCareSettings({
     this.blinkReminderEnabled = true,
@@ -70,6 +75,7 @@ class EyeCareSettings {
     this.strictLockMode = false,
     this.monitoringEnabled = true,
     this.voiceAlertsEnabled = true,
+    this.isPaidVersion = false,
   });
 
   factory EyeCareSettings.fromPrefs(SharedPreferences p) => EyeCareSettings(
@@ -80,6 +86,7 @@ class EyeCareSettings {
         strictLockMode: p.getBool('strictLockMode') ?? false,
         monitoringEnabled: p.getBool('monitoringEnabled') ?? true,
         voiceAlertsEnabled: p.getBool('voiceAlertsEnabled') ?? true,
+        isPaidVersion: p.getBool('isPaidVersion') ?? false,
       );
 
   Future<void> saveToPrefs(SharedPreferences p) async {
@@ -90,6 +97,7 @@ class EyeCareSettings {
     await p.setBool('strictLockMode', strictLockMode);
     await p.setBool('monitoringEnabled', monitoringEnabled);
     await p.setBool('voiceAlertsEnabled', voiceAlertsEnabled);
+    await p.setBool('isPaidVersion', isPaidVersion);
   }
 }
 
@@ -119,6 +127,17 @@ class EyeCareStats {
     return '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
   }
 
+  Map<String, dynamic> toJson() => {
+        'screenTimeSeconds': screenTimeSeconds,
+        'blinkRemindersCount': blinkRemindersCount,
+        'shortBreaksCompleted': shortBreaksCompleted,
+        'shortBreaksTotal': shortBreaksTotal,
+        'distanceChecksCount': distanceChecksCount,
+        'longBreaksCompleted': longBreaksCompleted,
+        'longBreaksTotal': longBreaksTotal,
+        'dateKey': dateKey,
+      };
+
   factory EyeCareStats.fromPrefs(SharedPreferences p) {
     final today = todayKey();
     final savedDate = p.getString('dateKey');
@@ -135,6 +154,43 @@ class EyeCareStats {
       longBreaksTotal: p.getInt('longBreaksTotal') ?? 0,
       dateKey: today,
     );
+  }
+
+  /// مثل fromPrefs، اما اگر روز عوض شده باشد، قبل از صفر کردن آمار، یک
+  /// کپی از آمار روزِ قبل را در آرشیو تاریخچه (برای گزارش هفتگی/ماهانه)
+  /// ذخیره می‌کند.
+  static Future<EyeCareStats> fromPrefsWithArchive(SharedPreferences p) async {
+    final today = todayKey();
+    final savedDate = p.getString('dateKey');
+    if (savedDate != null && savedDate != today) {
+      final previous = EyeCareStats(
+        screenTimeSeconds: p.getInt('screenTimeSeconds') ?? 0,
+        blinkRemindersCount: p.getInt('blinkRemindersCount') ?? 0,
+        shortBreaksCompleted: p.getInt('shortBreaksCompleted') ?? 0,
+        shortBreaksTotal: p.getInt('shortBreaksTotal') ?? 0,
+        distanceChecksCount: p.getInt('distanceChecksCount') ?? 0,
+        longBreaksCompleted: p.getInt('longBreaksCompleted') ?? 0,
+        longBreaksTotal: p.getInt('longBreaksTotal') ?? 0,
+        dateKey: savedDate,
+      );
+      final raw = p.getString('statsHistory');
+      final List<dynamic> history = raw != null ? jsonDecode(raw) as List<dynamic> : [];
+      history.removeWhere((e) => (e as Map)['dateKey'] == savedDate);
+      history.add(previous.toJson());
+      // فقط ۶۰ روز اخیر را نگه می‌داریم تا حجم ذخیره‌سازی محدود بماند.
+      final trimmed = history.length > 60
+          ? history.sublist(history.length - 60)
+          : history;
+      await p.setString('statsHistory', jsonEncode(trimmed));
+    }
+    return EyeCareStats.fromPrefs(p);
+  }
+
+  static Future<List<Map<String, dynamic>>> loadHistory(SharedPreferences p) async {
+    final raw = p.getString('statsHistory');
+    if (raw == null) return [];
+    final List<dynamic> decoded = jsonDecode(raw) as List<dynamic>;
+    return decoded.cast<Map<String, dynamic>>();
   }
 
   Future<void> saveToPrefs(SharedPreferences p) async {
@@ -165,6 +221,31 @@ class _MainDashboardState extends State<MainDashboard>
 
   bool _nativeAvailable = false;
   bool _hasOverlayPermission = false;
+  BannerAd? _bannerAd;
+  bool _bannerLoaded = false;
+
+  // شناسه‌ی آزمایشی رسمی گوگل — همیشه یک تبلیغ نمونه نشان می‌دهد و بدون
+  // حساب AdMob هم کار می‌کند. پیش از انتشار نهایی باید با Ad Unit ID
+  // واقعیِ حساب AdMob خودتان جایگزین شود.
+  static const String _testBannerAdUnitId = 'ca-app-pub-3940256099942544/6300978111';
+
+  void _loadBannerAd() {
+    if (_settings.isPaidVersion) return;
+    _bannerAd = BannerAd(
+      adUnitId: _testBannerAdUnitId,
+      size: AdSize.banner,
+      request: const AdRequest(),
+      listener: BannerAdListener(
+        onAdLoaded: (ad) {
+          if (mounted) setState(() => _bannerLoaded = true);
+        },
+        onAdFailedToLoad: (ad, error) {
+          ad.dispose();
+          _bannerAd = null;
+        },
+      ),
+    )..load();
+  }
   int _lastKnownTotalSeconds = 0;
   int _nextShortBreakAt = 0;
   int _nextLongBreakAt = 0;
@@ -196,7 +277,7 @@ class _MainDashboardState extends State<MainDashboard>
     final prefs = await SharedPreferences.getInstance();
     _prefs = prefs;
     _settings = EyeCareSettings.fromPrefs(prefs);
-    _stats = EyeCareStats.fromPrefs(prefs);
+    _stats = await EyeCareStats.fromPrefsWithArchive(prefs);
 
     final native = await NativeScreenTimeService.getRealScreenTimeSeconds();
     _nativeAvailable = native != null;
@@ -230,6 +311,7 @@ class _MainDashboardState extends State<MainDashboard>
       _startTicking();
       _restartBlinkTimer();
     }
+    _loadBannerAd();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _showMedicalDisclaimer();
     });
@@ -721,6 +803,134 @@ class _MainDashboardState extends State<MainDashboard>
     );
   }
 
+  /// یک دیالوگ کوچک برای انتخاب بازه‌ی گزارش (روز/هفته/ماه).
+  void _showReportPeriodPicker() {
+    showDialog(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('گزارش کدام بازه؟'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () {
+              Navigator.pop(context);
+              _showDailyReport();
+            },
+            child: const Text('امروز'),
+          ),
+          SimpleDialogOption(
+            onPressed: () {
+              Navigator.pop(context);
+              _showPeriodReport(7, 'هفته‌ی اخیر');
+            },
+            child: const Text('۷ روز اخیر'),
+          ),
+          SimpleDialogOption(
+            onPressed: () {
+              Navigator.pop(context);
+              _showPeriodReport(30, 'ماه اخیر');
+            },
+            child: const Text('۳۰ روز اخیر'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// گزارش تجمیعی هفتگی/ماهانه: آمار روزهای گذشته (از آرشیو) را با آمار
+  /// امروز جمع می‌زند و یک جمع‌بندیِ معنادار (نه فقط عدد خام) نشان می‌دهد.
+  Future<void> _showPeriodReport(int days, String periodLabel) async {
+    if (_prefs == null) return;
+    final history = await EyeCareStats.loadHistory(_prefs!);
+    final cutoff = DateTime.now().subtract(Duration(days: days - 1));
+
+    int totalScreenSeconds = _stats.screenTimeSeconds;
+    int totalBlink = _stats.blinkRemindersCount;
+    int totalShortDone = _stats.shortBreaksCompleted;
+    int totalShortAll = _stats.shortBreaksTotal;
+    int totalLongDone = _stats.longBreaksCompleted;
+    int totalLongAll = _stats.longBreaksTotal;
+    int daysWithData = _stats.screenTimeSeconds > 0 ? 1 : 0;
+
+    for (final entry in history) {
+      final dateKey = entry['dateKey'] as String?;
+      if (dateKey == null) continue;
+      final parts = dateKey.split('-');
+      if (parts.length != 3) continue;
+      final entryDate = DateTime(
+        int.parse(parts[0]),
+        int.parse(parts[1]),
+        int.parse(parts[2]),
+      );
+      if (entryDate.isBefore(DateTime(cutoff.year, cutoff.month, cutoff.day))) continue;
+
+      totalScreenSeconds += (entry['screenTimeSeconds'] as num?)?.toInt() ?? 0;
+      totalBlink += (entry['blinkRemindersCount'] as num?)?.toInt() ?? 0;
+      totalShortDone += (entry['shortBreaksCompleted'] as num?)?.toInt() ?? 0;
+      totalShortAll += (entry['shortBreaksTotal'] as num?)?.toInt() ?? 0;
+      totalLongDone += (entry['longBreaksCompleted'] as num?)?.toInt() ?? 0;
+      totalLongAll += (entry['longBreaksTotal'] as num?)?.toInt() ?? 0;
+      daysWithData++;
+    }
+
+    final avgHoursPerDay = daysWithData > 0
+        ? (totalScreenSeconds / daysWithData / 3600)
+        : 0.0;
+    final ratio = totalShortAll > 0 ? totalShortDone / totalShortAll : 1.0;
+
+    String verdict;
+    Color verdictColor;
+    if (daysWithData == 0) {
+      verdict = 'هنوز داده‌ی کافی برای این بازه ثبت نشده.';
+      verdictColor = Colors.grey;
+    } else if (ratio >= 0.7) {
+      verdict =
+          'عملکرد خوبی داشتی — در بیشتر روزهای این بازه، یادآوری‌های مراقبت از چشم را رعایت کردی.';
+      verdictColor = Colors.green;
+    } else if (ratio >= 0.4) {
+      verdict =
+          'در این بازه گاهی یادآوری‌ها رعایت شده و گاهی نه؛ سعی کن دفعه‌ی بعد پیوسته‌تر باشی.';
+      verdictColor = Colors.orange;
+    } else {
+      verdict =
+          'در این بازه بیشتر یادآوری‌ها نادیده گرفته شده‌اند؛ برای کاهش فشار چشمی بهتر است بیشتر به آن‌ها توجه کنی.';
+      verdictColor = Colors.red;
+    }
+
+    if (!mounted) return;
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(25)),
+      ),
+      builder: (context) => Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('👁️ گزارش $periodLabel',
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 16),
+            Text('میانگین استفاده از صفحه در روز: ${avgHoursPerDay.toStringAsFixed(1)} ساعت'),
+            Text('روزهای دارای داده: $daysWithData از $days روز'),
+            Text('یادآوری پلک: $totalBlink مرتبه'),
+            Text('استراحت‌های کوتاه انجام‌شده: $totalShortDone از $totalShortAll'),
+            Text('استراحت‌های طولانی انجام‌شده: $totalLongDone از $totalLongAll'),
+            const Divider(height: 32),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: verdictColor.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(verdict, style: TextStyle(color: verdictColor)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _openSettingsSheet() {
     showModalBottomSheet(
       context: context,
@@ -869,8 +1079,13 @@ class _MainDashboardState extends State<MainDashboard>
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('همراه سلامت چشم',
+            Text('محافظ چشم',
                 style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            SizedBox(height: 4),
+            Text(
+              'یک مداخله‌ی دیجیتال سلامت (Digital Health Intervention) برای کاهش فشار چشمی',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
             SizedBox(height: 12),
             Text('سازنده: احسان ایزدی'),
             SizedBox(height: 4),
@@ -908,9 +1123,9 @@ class _MainDashboardState extends State<MainDashboard>
     }
     return Scaffold(
       appBar: AppBar(
-        title: const Text('همراه سلامت چشم'),
+        title: const Text('محافظ چشم'),
         actions: [
-          IconButton(icon: const Icon(Icons.bar_chart), onPressed: _showDailyReport),
+          IconButton(icon: const Icon(Icons.bar_chart), onPressed: _showReportPeriodPicker),
           IconButton(icon: const Icon(Icons.info_outline), onPressed: _showAboutDialog),
           IconButton(icon: const Icon(Icons.settings), onPressed: _openSettingsSheet),
         ],
@@ -997,6 +1212,16 @@ class _MainDashboardState extends State<MainDashboard>
                       trailing: const Icon(Icons.chevron_left, size: 20),
                       onTap: _triggerShortBreakDialog,
                     ),
+                    const Divider(height: 1, indent: 16, endIndent: 16),
+                    ListTile(
+                      leading: CircleAvatar(
+                        backgroundColor: const Color(0xFF2B6CB0).withOpacity(0.1),
+                        child: const Icon(Icons.self_improvement, color: Color(0xFF2B6CB0)),
+                      ),
+                      title: const Text('تست یادآوری استراحت طولانی (۲ ساعت)'),
+                      trailing: const Icon(Icons.chevron_left, size: 20),
+                      onTap: _triggerLongBreakDialog,
+                    ),
                   ],
                 ),
               ),
@@ -1041,6 +1266,15 @@ class _MainDashboardState extends State<MainDashboard>
             ),
         ],
       ),
+      bottomNavigationBar: (_bannerLoaded && _bannerAd != null)
+          ? SafeArea(
+              child: SizedBox(
+                width: _bannerAd!.size.width.toDouble(),
+                height: _bannerAd!.size.height.toDouble(),
+                child: AdWidget(ad: _bannerAd!),
+              ),
+            )
+          : null,
     );
   }
 
@@ -1051,6 +1285,7 @@ class _MainDashboardState extends State<MainDashboard>
     _uiTimer?.cancel();
     _blinkTimer?.cancel();
     _blinkAnimController.dispose();
+    _bannerAd?.dispose();
     _persistStats();
     super.dispose();
   }

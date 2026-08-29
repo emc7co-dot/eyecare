@@ -1,5 +1,5 @@
 name: eyecare_app
-description: "همراه سلامت چشم — یادآوری پلک زدن، استراحت کوتاه/طولانی و بررسی فاصله"
+description: "محافظ چشم — یک مداخله‌ی دیجیتال سلامت (Digital Health Intervention) برای کاهش فشار چشمی؛ یادآوری پلک زدن، استراحت کوتاه/طولانی و بررسی فاصله"
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -12,6 +12,7 @@ dependencies:
   flutter_localizations:
     sdk: flutter
   shared_preferences: ^2.2.2
+  google_mobile_ads: ^5.1.0
 
 dev_dependencies:
   flutter_test:
