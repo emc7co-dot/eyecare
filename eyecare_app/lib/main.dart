@@ -8,7 +8,11 @@ import 'native_screen_time_service.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  MobileAds.instance.initialize();
+  try {
+    MobileAds.instance.initialize();
+  } catch (e) {
+    // بی‌خطر رد شو؛ نبود سرویس‌های گوگل نباید کل اپ را کرش کند
+  }
   runApp(const EyeCareApp());
 }
 
@@ -231,20 +235,25 @@ class _MainDashboardState extends State<MainDashboard>
 
   void _loadBannerAd() {
     if (_settings.isPaidVersion) return;
-    _bannerAd = BannerAd(
-      adUnitId: _testBannerAdUnitId,
-      size: AdSize.banner,
-      request: const AdRequest(),
-      listener: BannerAdListener(
-        onAdLoaded: (ad) {
-          if (mounted) setState(() => _bannerLoaded = true);
-        },
-        onAdFailedToLoad: (ad, error) {
-          ad.dispose();
-          _bannerAd = null;
-        },
-      ),
-    )..load();
+    try {
+      _bannerAd = BannerAd(
+        adUnitId: _testBannerAdUnitId,
+        size: AdSize.banner,
+        request: const AdRequest(),
+        listener: BannerAdListener(
+          onAdLoaded: (ad) {
+            if (mounted) setState(() => _bannerLoaded = true);
+          },
+          onAdFailedToLoad: (ad, error) {
+            ad.dispose();
+            _bannerAd = null;
+          },
+        ),
+      )..load();
+    } catch (e) {
+      // بی‌خطر رد شو؛ اگر تبلیغ لود نشود، بقیه‌ی اپ باید عادی کار کند
+      _bannerAd = null;
+    }
   }
   int _lastKnownTotalSeconds = 0;
   int _nextShortBreakAt = 0;
