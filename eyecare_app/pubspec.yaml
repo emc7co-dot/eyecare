@@ -4,7 +4,7 @@ publish_to: 'none'
 version: 1.0.0+1
 
 environment:
-  sdk: '>=3.0.0 <4.0.0'
+  sdk: '>=3.0.0 <5.0.0'
 
 dependencies:
   flutter:
@@ -12,7 +12,7 @@ dependencies:
   flutter_localizations:
     sdk: flutter
   shared_preferences: ^2.2.2
-  google_mobile_ads: ^5.1.0
+  google_mobile_ads: any
 
 dev_dependencies:
   flutter_test:
