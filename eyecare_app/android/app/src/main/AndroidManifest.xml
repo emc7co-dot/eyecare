@@ -43,12 +43,5 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
-
-        <!-- شناسه‌ی آزمایشی رسمی گوگل برای AdMob — بدون نیاز به حساب،
-             همیشه تبلیغ نمونه نشان می‌دهد. پیش از انتشار نهایی باید با
-             App ID واقعیِ حساب AdMob خودتان جایگزین شود. -->
-        <meta-data
-            android:name="com.google.android.gms.ads.APPLICATION_ID"
-            android:value="ca-app-pub-3940256099942544~3347511713"/>
     </application>
 </manifest>

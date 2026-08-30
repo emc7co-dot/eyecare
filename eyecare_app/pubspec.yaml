@@ -12,7 +12,6 @@ dependencies:
   flutter_localizations:
     sdk: flutter
   shared_preferences: ^2.2.2
-  google_mobile_ads: any
 
 dev_dependencies:
   flutter_test:

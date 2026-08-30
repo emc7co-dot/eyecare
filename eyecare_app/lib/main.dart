@@ -3,16 +3,9 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'native_screen_time_service.dart';
 
 void main() {
-  WidgetsFlutterBinding.ensureInitialized();
-  try {
-    MobileAds.instance.initialize();
-  } catch (e) {
-    // بی‌خطر رد شو؛ نبود سرویس‌های گوگل نباید کل اپ را کرش کند
-  }
   runApp(const EyeCareApp());
 }
 
@@ -225,36 +218,6 @@ class _MainDashboardState extends State<MainDashboard>
 
   bool _nativeAvailable = false;
   bool _hasOverlayPermission = false;
-  BannerAd? _bannerAd;
-  bool _bannerLoaded = false;
-
-  // شناسه‌ی آزمایشی رسمی گوگل — همیشه یک تبلیغ نمونه نشان می‌دهد و بدون
-  // حساب AdMob هم کار می‌کند. پیش از انتشار نهایی باید با Ad Unit ID
-  // واقعیِ حساب AdMob خودتان جایگزین شود.
-  static const String _testBannerAdUnitId = 'ca-app-pub-3940256099942544/6300978111';
-
-  void _loadBannerAd() {
-    if (_settings.isPaidVersion) return;
-    try {
-      _bannerAd = BannerAd(
-        adUnitId: _testBannerAdUnitId,
-        size: AdSize.banner,
-        request: const AdRequest(),
-        listener: BannerAdListener(
-          onAdLoaded: (ad) {
-            if (mounted) setState(() => _bannerLoaded = true);
-          },
-          onAdFailedToLoad: (ad, error) {
-            ad.dispose();
-            _bannerAd = null;
-          },
-        ),
-      )..load();
-    } catch (e) {
-      // بی‌خطر رد شو؛ اگر تبلیغ لود نشود، بقیه‌ی اپ باید عادی کار کند
-      _bannerAd = null;
-    }
-  }
   int _lastKnownTotalSeconds = 0;
   int _nextShortBreakAt = 0;
   int _nextLongBreakAt = 0;
@@ -320,7 +283,6 @@ class _MainDashboardState extends State<MainDashboard>
       _startTicking();
       _restartBlinkTimer();
     }
-    _loadBannerAd();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _showMedicalDisclaimer();
     });
@@ -1275,15 +1237,6 @@ class _MainDashboardState extends State<MainDashboard>
             ),
         ],
       ),
-      bottomNavigationBar: (_bannerLoaded && _bannerAd != null)
-          ? SafeArea(
-              child: SizedBox(
-                width: _bannerAd!.size.width.toDouble(),
-                height: _bannerAd!.size.height.toDouble(),
-                child: AdWidget(ad: _bannerAd!),
-              ),
-            )
-          : null,
     );
   }
 
@@ -1294,7 +1247,6 @@ class _MainDashboardState extends State<MainDashboard>
     _uiTimer?.cancel();
     _blinkTimer?.cancel();
     _blinkAnimController.dispose();
-    _bannerAd?.dispose();
     _persistStats();
     super.dispose();
   }
