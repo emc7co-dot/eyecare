@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'native_screen_time_service.dart';
 
 void main() {
@@ -234,6 +236,13 @@ class _MainDashboardState extends State<MainDashboard>
   late AnimationController _blinkAnimController;
   bool _showBlinkOverlay = false;
 
+  // فقط برای ویندوز استفاده می‌شود؛ اندروید نوتیفیکیشن‌های خودش را از
+  // طریق سرویس بومی Kotlin می‌فرستد (سیستم جداگانه‌ی قوی‌تر و بدون
+  // وابستگی به بسته‌ی جانبی).
+  final FlutterLocalNotificationsPlugin _windowsNotifications =
+      FlutterLocalNotificationsPlugin();
+  bool _windowsNotificationsReady = false;
+
   @override
   void initState() {
     super.initState();
@@ -242,7 +251,43 @@ class _MainDashboardState extends State<MainDashboard>
       vsync: this,
       duration: const Duration(milliseconds: 1200),
     );
+    if (Platform.isWindows) {
+      _initWindowsNotifications();
+    }
     _loadAndStart();
+  }
+
+  Future<void> _initWindowsNotifications() async {
+    try {
+      const settings = InitializationSettings(
+        windows: WindowsInitializationSettings(
+          appName: 'محافظ چشم',
+          appUserModelId: 'Com.Wining.EyeCareApp',
+          guid: 'd49b0314-ee7a-4626-bf79-97cdb8a991bb',
+        ),
+      );
+      await _windowsNotifications.initialize(settings);
+      _windowsNotificationsReady = true;
+    } catch (e) {
+      // بی‌خطر رد شو؛ نبود نوتیفیکیشن نباید کل اپ را کرش کند
+      _windowsNotificationsReady = false;
+    }
+  }
+
+  /// یک نوتیفیکیشن واقعی سیستمِ ویندوز نشان می‌دهد — برخلاف دیالوگ
+  /// داخل‌اپ، حتی وقتی پنجره Minimize باشد هم دیده می‌شود.
+  Future<void> _showWindowsNotification(String title, String body) async {
+    if (!Platform.isWindows || !_windowsNotificationsReady) return;
+    try {
+      await _windowsNotifications.show(
+        DateTime.now().millisecondsSinceEpoch ~/ 1000,
+        title,
+        body,
+        const NotificationDetails(),
+      );
+    } catch (e) {
+      // بی‌خطر رد شو
+    }
   }
 
   Future<void> _loadAndStart() async {
@@ -447,6 +492,19 @@ class _MainDashboardState extends State<MainDashboard>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    // روی ویندوز سرویس پس‌زمینه‌ی بومی (مثل اندروید) وجود ندارد؛ خودِ
+    // فلاتر تنها مسئول شمارش و یادآوری‌هاست. پس Minimize کردن پنجره
+    // نباید باعث توقف شمارش/یادآوری بشود — فقط روی اندروید معنی دارد
+    // که «پس‌زمینه» را به سرویس بومی اطلاع بدهیم.
+    if (Platform.isWindows) {
+      if (state == AppLifecycleState.paused ||
+          state == AppLifecycleState.hidden ||
+          state == AppLifecycleState.inactive) {
+        _persistStats(); // فقط ذخیره‌ی احتیاطی؛ شمارش متوقف نمی‌شود
+      }
+      return;
+    }
+
     final wasForeground = _appInForeground;
     _appInForeground = state == AppLifecycleState.resumed;
 
@@ -499,6 +557,7 @@ class _MainDashboardState extends State<MainDashboard>
       _showBlinkOverlay = true;
       _stats.blinkRemindersCount++;
     });
+    _showWindowsNotification('👁️ پلک بزن', 'چند بار پلک بزن تا چشم‌هایت خشک نشود.');
     _blinkAnimController.forward(from: 0.0).then((_) {
       if (!mounted) return;
       _blinkAnimController.reverse().then((_) {
@@ -516,6 +575,7 @@ class _MainDashboardState extends State<MainDashboard>
 
   void _triggerShortBreakDialog() {
     _dialogOpen = true;
+    _showWindowsNotification('👁️ وقت مراقبت از چشم', '۲۰ ثانیه به فاصله‌ی حداقل ۶ متر نگاه کن.');
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -590,6 +650,7 @@ class _MainDashboardState extends State<MainDashboard>
           if (_nativeAvailable) {
             NativeScreenTimeService.showBreakFinishedNotification();
           }
+          _showWindowsNotification('🔔 استراحت تمام شد', 'می‌توانی به کار خودت ادامه بدهی.');
         },
       ),
     ).then((_) {
@@ -640,6 +701,7 @@ class _MainDashboardState extends State<MainDashboard>
 
   void _triggerLongBreakDialog() {
     _dialogOpen = true;
+    _showWindowsNotification('🛑 استراحت طولانی', 'مدت زیادی از صفحه استفاده کردی؛ ۱۵ دقیقه مانیتور را رها کن.');
     showDialog(
       context: context,
       barrierDismissible: !_settings.strictLockMode,
