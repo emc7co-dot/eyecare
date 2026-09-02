@@ -4,7 +4,6 @@ import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'native_screen_time_service.dart';
 
 void main() {
@@ -236,13 +235,6 @@ class _MainDashboardState extends State<MainDashboard>
   late AnimationController _blinkAnimController;
   bool _showBlinkOverlay = false;
 
-  // فقط برای ویندوز استفاده می‌شود؛ اندروید نوتیفیکیشن‌های خودش را از
-  // طریق سرویس بومی Kotlin می‌فرستد (سیستم جداگانه‌ی قوی‌تر و بدون
-  // وابستگی به بسته‌ی جانبی).
-  final FlutterLocalNotificationsPlugin _windowsNotifications =
-      FlutterLocalNotificationsPlugin();
-  bool _windowsNotificationsReady = false;
-
   @override
   void initState() {
     super.initState();
@@ -251,44 +243,15 @@ class _MainDashboardState extends State<MainDashboard>
       vsync: this,
       duration: const Duration(milliseconds: 1200),
     );
-    if (Platform.isWindows) {
-      _initWindowsNotifications();
-    }
     _loadAndStart();
   }
 
-  Future<void> _initWindowsNotifications() async {
-    try {
-      const settings = InitializationSettings(
-        windows: WindowsInitializationSettings(
-          appName: 'محافظ چشم',
-          appUserModelId: 'Com.Wining.EyeCareApp',
-          guid: 'd49b0314-ee7a-4626-bf79-97cdb8a991bb',
-        ),
-      );
-      await _windowsNotifications.initialize(settings);
-      _windowsNotificationsReady = true;
-    } catch (e) {
-      // بی‌خطر رد شو؛ نبود نوتیفیکیشن نباید کل اپ را کرش کند
-      _windowsNotificationsReady = false;
-    }
-  }
-
-  /// یک نوتیفیکیشن واقعی سیستمِ ویندوز نشان می‌دهد — برخلاف دیالوگ
-  /// داخل‌اپ، حتی وقتی پنجره Minimize باشد هم دیده می‌شود.
-  Future<void> _showWindowsNotification(String title, String body) async {
-    if (!Platform.isWindows || !_windowsNotificationsReady) return;
-    try {
-      await _windowsNotifications.show(
-        DateTime.now().millisecondsSinceEpoch ~/ 1000,
-        title,
-        body,
-        const NotificationDetails(),
-      );
-    } catch (e) {
-      // بی‌خطر رد شو
-    }
-  }
+  /// TODO: نوتیفیکیشن واقعی سیستم ویندوز فعلاً پیاده نشده (پکیج قبلی
+  /// ناسازگار بود و باعث شکست بیلد می‌شد). فعلاً این متد فقط یک no-op
+  /// امن است تا بقیه‌ی کد بدون تغییر کار کند؛ یادآوری‌ها روی ویندوز از
+  /// طریق دیالوگ داخل‌اپ (که دیگر با Minimize متوقف نمی‌شود) نمایش داده
+  /// می‌شوند.
+  Future<void> _showWindowsNotification(String title, String body) async {}
 
   Future<void> _loadAndStart() async {
     final prefs = await SharedPreferences.getInstance();
