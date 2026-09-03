@@ -4,9 +4,18 @@ import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:window_manager/window_manager.dart';
 import 'native_screen_time_service.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  if (Platform.isWindows) {
+    try {
+      await windowManager.ensureInitialized();
+    } catch (e) {
+      // بی‌خطر رد شو
+    }
+  }
   runApp(const EyeCareApp());
 }
 
@@ -251,7 +260,23 @@ class _MainDashboardState extends State<MainDashboard>
   /// امن است تا بقیه‌ی کد بدون تغییر کار کند؛ یادآوری‌ها روی ویندوز از
   /// طریق دیالوگ داخل‌اپ (که دیگر با Minimize متوقف نمی‌شود) نمایش داده
   /// می‌شوند.
-  Future<void> _showWindowsNotification(String title, String body) async {}
+  /// روی ویندوز، وقتی وقت یادآوریه، پنجره را از Minimize درمی‌آورد و
+  /// جلو می‌آورد تا دیالوگ داخل‌اپ دیده بشه — چون نوتیفیکیشن سیستمی
+  /// واقعی در فلاتر برای ویندوز فعلاً پیاده نشده (پکیج‌های موجود در
+  /// عمل ناپایدار بودند)، این ساده‌ترین راه مطمئنه.
+  Future<void> _showWindowsNotification(String title, String body) async {
+    if (!Platform.isWindows) return;
+    try {
+      final isMinimized = await windowManager.isMinimized();
+      if (isMinimized) {
+        await windowManager.restore();
+      }
+      await windowManager.show();
+      await windowManager.focus();
+    } catch (e) {
+      // بی‌خطر رد شو؛ اگر کنترل پنجره ممکن نبود، دیالوگ همچنان در پس‌زمینه ثبت می‌شود
+    }
+  }
 
   Future<void> _loadAndStart() async {
     final prefs = await SharedPreferences.getInstance();
