@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show SystemSound, SystemSoundType;
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:window_manager/window_manager.dart';
@@ -260,19 +261,36 @@ class _MainDashboardState extends State<MainDashboard>
   /// امن است تا بقیه‌ی کد بدون تغییر کار کند؛ یادآوری‌ها روی ویندوز از
   /// طریق دیالوگ داخل‌اپ (که دیگر با Minimize متوقف نمی‌شود) نمایش داده
   /// می‌شوند.
-  /// روی ویندوز، وقتی وقت یادآوریه، پنجره را از Minimize درمی‌آورد و
-  /// جلو می‌آورد تا دیالوگ داخل‌اپ دیده بشه — چون نوتیفیکیشن سیستمی
-  /// واقعی در فلاتر برای ویندوز فعلاً پیاده نشده (پکیج‌های موجود در
-  /// عمل ناپایدار بودند)، این ساده‌ترین راه مطمئنه.
+  /// روی ویندوز، وقتی وقت یادآوریه، پنجره را لحظه‌ای از Minimize درمی‌آورد
+  /// (همراه با یک بوق سیستمی) تا کاربر متوجه بشه، و بعد از چند ثانیه خودش
+  /// دوباره Minimize می‌کند — به‌جای اینکه پنجره باز بمونه و کاربر مجبور
+  /// بشه دستی ببندتش (که باعث اختلال تو کارش میشه).
   Future<void> _showWindowsNotification(String title, String body) async {
     if (!Platform.isWindows) return;
     try {
-      final isMinimized = await windowManager.isMinimized();
-      if (isMinimized) {
+      SystemSound.play(SystemSoundType.alert);
+    } catch (e) {
+      // بی‌خطر رد شو
+    }
+    try {
+      final wasMinimized = await windowManager.isMinimized();
+      if (wasMinimized) {
         await windowManager.restore();
       }
       await windowManager.show();
       await windowManager.focus();
+
+      if (wasMinimized) {
+        Future.delayed(const Duration(seconds: 3), () async {
+          try {
+            if (!_dialogOpen) {
+              await windowManager.minimize();
+            }
+          } catch (e) {
+            // بی‌خطر رد شو
+          }
+        });
+      }
     } catch (e) {
       // بی‌خطر رد شو؛ اگر کنترل پنجره ممکن نبود، دیالوگ همچنان در پس‌زمینه ثبت می‌شود
     }
