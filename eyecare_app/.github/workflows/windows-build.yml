@@ -26,6 +26,11 @@ jobs:
       - name: Scaffold missing Windows platform files
         run: flutter create --platforms=windows .
 
+      - name: Set window title
+        shell: pwsh
+        run: |
+          (Get-Content windows\runner\main.cpp) -replace '"eyecare_app"', '"Eye Protector"' | Set-Content windows\runner\main.cpp
+
       - name: Install dependencies
         run: flutter pub get
 
